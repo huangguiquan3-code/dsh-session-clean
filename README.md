@@ -38,6 +38,31 @@ $DSH_HOME/
 | 只还原了一半 | 逐项独立处理，失败的不影响成功的；重写 manifest 只留剩余项，可再次 `restore` |
 | 删到一半中断 | 任一步失败整体回滚本次移动，不留半残批次 |
 
+## 界面
+
+两个入口，都挂官方插槽，**不覆盖、不修改任何官方组件**：
+
+| 位置 | 插槽 | id | order |
+|---|---|---|---|
+| 会话右键「⋯」菜单 | `sidebar.workspaces.session.menu.item` | `session-clean.delete` | 480 |
+| 设置页 | `settings.section` | `session-clean.trash` | 900 |
+
+菜单项排在官方 `archive`(400) 与 `session-id`(450) 之后，不会遮蔽任何官方条目。
+
+设置页的分区是回收站面板：列出每个批次的标题、删除时间、大小，支持单项还原、彻底删除、清空回收站。
+
+### 崩溃防护
+
+界面代码按「宿主崩了就是事故」的标准写：
+
+- `ctx` 不合法、缺 `effect` → 入口直接 return，不写日志；
+- 缺 `slots` / `react` / `locale` / `workspace` → 逐项降级，缺什么跳什么；
+- 每个组件内部 `try/catch`，渲染期异常返回 `null` 而不是冒泡；
+- 插槽注册包在 `ctx.effect` 里，卸载时自动注销，且注销可重复调用；
+- 只用契约里写明的 props（`sessionId` / `useMenuOpenState`），不猜未公开字段。
+
+`test/client.mjs` 用假 ctx 覆盖了 15 种组合，包括「ctx 为 null」「没有 react」「props 全 undefined」。
+
 ## 用法
 
 ```sh
