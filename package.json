@@ -1,0 +1,26 @@
+{
+  "name": "dsh-session-clean",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DeepSeek Harness 会话删除插件：归档辅助 + 回收站 + 可还原。不修改官方任何文件。",
+  "type": "module",
+  "main": "lib/index.js",
+  "bin": {
+    "session-clean": "bin/session-clean.js"
+  },
+  "files": [
+    "lib",
+    "bin",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

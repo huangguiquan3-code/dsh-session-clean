@@ -1,0 +1,9 @@
+# dsh-session-clean bundle patch
+#
+# 只 insert 一个插件条目，不改动任何既有条目、不碰官方包源码。
+# 宿主起不来时把这一段注释掉即可完全退场。
+- insert:
+    - id: dsh-session-clean
+      name: 'dsh-session-clean'
+      config:
+        enabled: true
