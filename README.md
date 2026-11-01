@@ -40,28 +40,50 @@ $DSH_HOME/
 
 ## 界面
 
-两个入口，都挂官方插槽，**不覆盖、不修改任何官方组件**：
+在**设置页**里加一个「会话回收站」分区，**不覆盖、不修改任何官方组件**：
 
-| 位置 | 插槽 | id | order |
-|---|---|---|---|
-| 会话右键「⋯」菜单 | `sidebar.workspaces.session.menu.item` | `session-clean.delete` | 480 |
-| 设置页 | `settings.section` | `session-clean.trash` | 900 |
+| 插槽 | id | order |
+|---|---|---|
+| `settings.section` | `session-clean.trash` | 900 |
 
-菜单项排在官方 `archive`(400) 与 `session-id`(450) 之后，不会遮蔽任何官方条目。
+面板内两个 Tab：
 
-设置页的分区是回收站面板：列出每个批次的标题、删除时间、大小，支持单项还原、彻底删除、清空回收站。
+- **会话** —— 列出所有可删除的会话（标题 / 时间 / 大小），每行一个「删除」按钮
+- **回收站** —— 列出已删除批次，支持「还原」「彻底删除」「清空回收站」
+
+### 为什么不用右键菜单
+
+`sidebar.workspaces.session.menu.item` 是**子表插槽**（`declaredBy` 是 `sidebar.workspaces`），
+注册时还需要 `slotInject` 注入 `menuOpenState` hook 工厂。第一版踩过这个坑，改成设置页方案，
+`settings.section` 是顶层插槽，`slots.inject` + `register` 即可。
+
+### 关键实现细节
+
+```js
+// 插槽是运行时 declared 的，必须等它出现再注册
+ctx.slots.inject('settings.section', () => {
+  ctx.slots.register({
+    name: 'settings.section',
+    id: 'session-clean.trash',
+    order: 900,
+    label: () => '会话回收站',   // ← 必填，否则只有图标没文字
+  }, SessionTrashSection);
+});
+```
 
 ### 崩溃防护
 
 界面代码按「宿主崩了就是事故」的标准写：
 
 - `ctx` 不合法、缺 `effect` → 入口直接 return，不写日志；
-- 缺 `slots` / `react` / `locale` / `workspace` → 逐项降级，缺什么跳什么；
+- 缺 `slots` / `react` → 逐项降级，缺什么跳什么；
+- **不裸访问 `ctx.locale` / `ctx.workspace` / `ctx.remote`** —— cordis 严格注入，
+  直接访问会抛 `cannot get property "x" without inject`；
 - 每个组件内部 `try/catch`，渲染期异常返回 `null` 而不是冒泡；
-- 插槽注册包在 `ctx.effect` 里，卸载时自动注销，且注销可重复调用；
-- 只用契约里写明的 props（`sessionId` / `useMenuOpenState`），不猜未公开字段。
+- 插槽注册包在 `ctx.effect` 里，卸载时自动注销，且注销可重复调用。
 
-`test/client.mjs` 用假 ctx 覆盖了 15 种组合，包括「ctx 为 null」「没有 react」「props 全 undefined」。
+`test/client.mjs` 用假 ctx 覆盖 14 种组合，包括「ctx 为 null」「没有 slots」「props 全 undefined」。
+`test/client-parse.mjs` 用 `vm.Script` 模拟浏览器非模块编译，确保没有顶层 `export`。
 
 ## 用法
 
