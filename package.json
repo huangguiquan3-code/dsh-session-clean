@@ -1,8 +1,8 @@
 {
   "name": "dsh-session-clean",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "DeepSeek Harness 会话删除插件：归档辅助 + 回收站 + 可还原。不修改官方任何文件。",
+  "description": "DSH 会话插件：侧边栏批量删除（回收站可还原）、批量导出（Markdown/JSON/ZIP）、隔离区、常驻桌面浮窗。不修改官方任何文件。",
   "type": "module",
   "main": "lib/index.js",
   "bin": {
@@ -13,12 +13,19 @@
     "bin",
     "client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "scripts"
   ],
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
+  "os": [
+    "win32",
+    "linux",
+    "darwin"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -34,5 +41,11 @@
     },
     "./client": "./client.js",
     "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node test/roundtrip.mjs && node test/stash.mjs && node test/export.mjs && node test/http.mjs && node test/client.mjs && node test/client-parse.mjs && node test/prompt-diagnostics.mjs && node test/render.mjs",
+    "test:core": "node test/roundtrip.mjs && node test/stash.mjs && node test/export.mjs",
+    "test:http": "node test/http.mjs",
+    "test:client": "node test/client.mjs && node test/client-parse.mjs && node test/render.mjs"
   }
 }

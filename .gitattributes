@@ -1,0 +1,12 @@
+# 统一换行，避免 Windows 上 checkout 出来的脚本被反复改写
+* text=auto eol=lf
+
+# Windows 专用脚本保持 CRLF（PowerShell 5.1 原生习惯，且不影响 BOM）
+*.ps1 text eol=crlf
+*.vbs text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制
+*.png binary
+*.zip binary

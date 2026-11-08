@@ -1,8 +1,35 @@
+# 依赖与工具产物
 node_modules/
+coverage/
+*.tsbuildinfo
+
+# 日志与临时文件
 *.log
-.DS_Store
-Thumbs.db
 *.tmp
+*.bak
+*.broken
+Thumbs.db
+.DS_Store
 .idea/
 .vscode/
-coverage/
+
+# 运行期数据（绝不入库）
+desk-*.log
+desk-heartbeat.txt
+desk-desired.json
+desk-recall.txt
+desk.json
+desk-window.json
+theme.json
+stash.json
+trash-sessions/
+exports/
+
+# 发布产物
+release/
+*.zip
+*.tar.gz
+
+# 本地测试沙箱
+.dsh-test-*/
+test-*/tmp/

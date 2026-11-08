@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['18', '20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 纯 node 测试，零运行时依赖，不需要 npm install。
+      # 每个测试自己用 mkdtemp 建临时 DSH_HOME，不碰真实数据。
+      - name: 核心（会话扫描 / 回收站 / 导出）
+        run: |
+          node test/roundtrip.mjs
+          node test/stash.mjs
+          node test/export.mjs
+
+      - name: 输入边界（路径穿越 / 跨站）
+        run: |
+          node test/path-safety.mjs
+          node test/same-origin.mjs
+
+      - name: HTTP 路由
+        run: node test/http.mjs
+
+      - name: 客户端（模块格式 / 槽位 / 渲染冒烟）
+        run: |
+          node test/client.mjs
+          node test/client-parse.mjs
+          node test/render.mjs
+
+      - name: 诊断
+        run: node test/prompt-diagnostics.mjs
+
+  powershell-syntax:
+    name: PowerShell 语法（win）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 解析所有 .ps1
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
+            if ($errs -and $errs.Count) {
+              $bad = 1
+              Write-Host "::error file=$($_.Name)::$($errs[0].Message)"
+            } else {
+              Write-Host "OK  $($_.Name)"
+            }
+          }
+          if ($bad -ne 0) { exit 1 }
+
+      - name: 检查 ps1 是否为 UTF-8 BOM（PowerShell 5.1 读写中文的前提）
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            if (-not $hasBom) { $bad = 1; Write-Host "::error file=$($_.Name)::缺少 UTF-8 BOM" }
+            else { Write-Host "BOM ok  $($_.Name)" }
+          }
+          if ($bad -ne 0) { exit 1 }
+
+  no-private-data:
+    name: 隐私扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 禁止提交真实会话 / 本机路径 / 凭据
+        run: |
+          set -e
+          fail=0
+          # 真实会话 id
+          if grep -rInE 'session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}' --include='*.md' --include='*.js' --include='*.mjs' --include='*.ps1' --include='*.json' . ; then
+            echo "::error::发现疑似真实 session id"; fail=1
+          fi
+          # 本机绝对路径（允许 test 里的 C:\Users\test\project 假路径）
+          if grep -rInE 'C:\\\\Users\\\\[^t]' --include='*.js' --include='*.mjs' --include='*.ps1' --include='*.md' . ; then
+            echo "::error::发现本机绝对路径"; fail=1
+          fi
+          # 常见凭据形态
+          if grep -rInE '(api[_-]?key|secret|token)\s*[:=]\s*["'\''][A-Za-z0-9_\-]{16,}' --include='*.js' --include='*.json' --include='*.md' . ; then
+            echo "::error::疑似硬编码凭据"; fail=1
+          fi
+          exit $fail

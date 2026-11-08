@@ -10,10 +10,13 @@
  *   session-clean list --incomplete       只看配对不全的
  *   session-clean delete <sessionId>...   移进回收站
  *   session-clean trash                   列出回收站
- *   session-clean restore <batchId>       还原一个批次
+ *   session-clean restore <batchId>       还原一个批次（同时取消归档）
  *   session-clean restore --all           还原全部
  *   session-clean purge <batchId>         彻底删除一个批次（不可恢复）
  *   session-clean purge --all             清空回收站
+ *   session-clean stash <sessionId>...    抽进隔离区（= 归档 + 记账）
+ *   session-clean unstash <sessionId>...  从隔离区放回（= 取消归档）
+ *   session-clean stash-list              列出隔离区
  */
 
 import fs from 'node:fs';
@@ -29,6 +32,10 @@ import {
   purgeAll,
   trashRoot,
 } from '../lib/trash.js';
+import { setArchivedOnDisk, isArchivedOnDisk, workspaceOf } from '../lib/workspace-state.js';
+import { listStash, addStash, removeStash } from '../lib/stash.js';
+import { selectSessions } from '../lib/store.js';
+import { exportToDisk } from '../lib/export.js';
 
 const argv = process.argv.slice(2);
 const cmd = argv.find((a) => !a.startsWith('-')) || 'list';
@@ -85,6 +92,53 @@ function cmdList() {
   }
 }
 
+function optValue(name) {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
+function cmdExport() {
+  const h = home();
+  const wantAll = flags.has('--all');
+  const ids = args.slice(1).filter((a) => a !== optValue('--out') && a !== optValue('--format') && a !== optValue('--q'));
+  const format = optValue('--format') || 'md';
+  const out = optValue('--out');
+  const q = optValue('--q');
+
+  let records;
+  if (wantAll) {
+    const { complete } = scanSessions(h);
+    const needle = String(q || '').toLowerCase();
+    records = needle
+      ? complete.filter((r) => [r.title, r.sessionId, r.workspace, r.workspaceTitle]
+        .some((v) => String(v || '').toLowerCase().includes(needle)))
+      : complete;
+  } else {
+    if (!ids.length) {
+      console.error('用法: session-clean export <sessionId>... [--format md|json|both] [--out DIR]');
+      console.error('      session-clean export --all [--q 关键词] [--format md|json|both] [--out DIR]');
+      process.exit(1);
+    }
+    const picked = selectSessions(h, ids);
+    records = picked.records;
+    if (picked.missing.length) console.log(`  ! 找不到 ${picked.missing.length} 个：${picked.missing.join(', ')}`);
+  }
+
+  if (!records.length) { console.error('没有可导出的会话'); process.exit(1); }
+
+  const r = exportToDisk(h, records, { format, dir: out, allowOutside: true }); // CLI 是本机可信调用
+  if (!r.ok) {
+    console.error(`  ✗ 导出失败：${r.error}`);
+    for (const s of r.skipped || []) console.error(`     跳过 ${s.sessionId}（${s.reason}）`);
+    process.exit(1);
+  }
+  console.log(`  导出目录  ${r.dir}`);
+  console.log(`  会话 ${r.stats.sessions} 场 · 文件 ${r.stats.files} 个 · 源体积 ${mb(r.stats.bytes)}`);
+  if (r.skipped && r.skipped.length) {
+    for (const s of r.skipped) console.log(`  ! 跳过 ${s.sessionId}（${s.reason}）`);
+  }
+}
+
 function cmdDelete() {
   const h = home();
   const ids = args.slice(1);
@@ -107,7 +161,11 @@ function cmdDelete() {
       ],
     });
     if (r.ok) console.log(`  ✓ ${id}  → 回收站 ${r.batchId}  ${mb(r.bytes)}`);
-    else { console.log(`  ✗ ${id}  ${r.error}`); failed++; }
+    else { console.log(`  ✗ ${id}  ${r.error}`); failed++; continue; }
+    // 文件搬走了，id 仍要留在归档集合里 —— 否则重启后会出现一行打不开的幽灵会话。
+    const a = setArchivedOnDisk(h, id, true);
+    if (!a.ok) console.log(`    ! 归档集合写入失败：${a.error}（会话已删，重启后可能出现空行）`);
+    removeStash(h, id);
   }
   if (failed) process.exit(1);
 }
@@ -127,6 +185,18 @@ function cmdTrash() {
   console.log(`  合计 ${mb(sum)}`);
 }
 
+/** 还原之后补一步：从归档集合里摘掉，否则侧边栏还是不显示这一行。 */
+function unarchiveForBatch(h, batch) {
+  if (!batch || !batch.sessionId) return;
+  const r = setArchivedOnDisk(h, batch.sessionId, false);
+  if (!r.ok) {
+    console.log(`    ! 取消归档失败：${r.error}`);
+    return;
+  }
+  if (r.changed) console.log(`    · 已取消归档 ${batch.sessionId}`);
+  removeStash(h, batch.sessionId);
+}
+
 function cmdRestore() {
   const h = home();
   if (flags.has('--all')) {
@@ -141,12 +211,14 @@ function cmdRestore() {
         console.log(`  ⚠ ${b.batchId}  冲突 ${r.conflicts.length} 项`);
         for (const c of r.conflicts) console.log(`      ${c.path}  (${c.reason})`);
       }
+      unarchiveForBatch(h, b);
     }
     if (bad) process.exit(1);
     return;
   }
   const id = args[1];
   if (!id) { console.error('用法: session-clean restore <batchId> | --all'); process.exit(1); }
+  const batch = listTrash(h).find((b) => b.batchId === id);
   const r = restoreBatch(h, id);
   if (r.ok) {
     console.log(`  ✓ ${id}  已还原 ${r.restored.length} 项`);
@@ -156,6 +228,7 @@ function cmdRestore() {
     for (const c of r.conflicts || []) console.log(`      ${c.path}  (${c.reason})`);
     process.exit(1);
   }
+  unarchiveForBatch(h, batch);
 }
 
 function cmdPurge() {
@@ -174,17 +247,79 @@ function cmdPurge() {
   else { console.log(`  ✗ ${id}  ${r.error}`); process.exit(1); }
 }
 
+function cmdStash() {
+  const h = home();
+  const ids = args.slice(1);
+  if (!ids.length) {
+    console.error('用法: session-clean stash <sessionId>...');
+    process.exit(1);
+  }
+  let failed = 0;
+  for (const id of ids) {
+    const rec = findSession(h, id);
+    const a = setArchivedOnDisk(h, id, true);
+    if (!a.ok) { console.log(`  ✗ ${id}  ${a.error}`); failed++; continue; }
+    const ws = workspaceOf(h, id);
+    addStash(h, {
+      sessionId: id,
+      title: (rec && rec.title) || '',
+      workspace: (rec && rec.workspace) || '',
+      workspaceId: (ws && ws.workspaceId) || '',
+    });
+    console.log(`  ✓ ${id}  已隔离（归档${a.changed ? '' : '，本来就在'}）`);
+  }
+  if (failed) process.exit(1);
+}
+
+function cmdUnstash() {
+  const h = home();
+  const ids = args.slice(1);
+  if (!ids.length) {
+    console.error('用法: session-clean unstash <sessionId>...');
+    process.exit(1);
+  }
+  let failed = 0;
+  for (const id of ids) {
+    const r = setArchivedOnDisk(h, id, false);
+    if (!r.ok) { console.log(`  ✗ ${id}  ${r.error}`); failed++; continue; }
+    removeStash(h, id);
+    console.log(`  ✓ ${id}  ${r.changed ? '已放回工作区' : '本来就没归档'}`);
+  }
+  if (failed) process.exit(1);
+}
+
+function cmdStashList() {
+  const h = home();
+  const items = listStash(h);
+  console.log(`隔离区  ${h}${path.sep}session-clean${path.sep}stash.json`);
+  if (!items.length) { console.log('（空）'); return; }
+  for (const it of items) {
+    const rec = findSession(h, it.sessionId);
+    const archived = isArchivedOnDisk(h, it.sessionId);
+    console.log(`  ${it.sessionId}  ${archived ? '归档中' : '未归档（异常）'}  ${rec ? '' : '正文缺失'}`);
+    console.log(`    ${String(it.stashedAt).slice(0, 16).replace('T', ' ')}  ${it.title || '(无标题)'}`);
+  }
+}
+
 const HELP = `dsh-session-clean
 
   list [--incomplete]        列出会话
-  delete <sessionId>...      移进回收站（可还原）
+  delete <sessionId>...      移进回收站（可还原，支持一次多个）
+  export <sessionId>...      导出会话正文为 Markdown / JSON
+         --all [--q 关键词]    导出全部（可加关键词过滤）
+         --format md|json|both 默认 md
+         --out <dir>           默认 ~/.dsh/exports/<时间戳>/
   trash                      列出回收站
-  restore <batchId> | --all  还原
+  restore <batchId> | --all  还原（同时取消归档，侧边栏才会重新出现）
   purge   <batchId> | --all  彻底删除（不可恢复）
+  stash   <sessionId>...     抽进隔离区（= 归档 + 记账）
+  unstash <sessionId>...     从隔离区放回（= 取消归档）
+  stash-list                 列出隔离区
 
   --home <path>              指定 DSH_HOME，默认 $DSH_HOME 或 ~/.dsh
 
-注意：delete 前请先退出 DSH 客户端，否则会话正被写入锁占用会失败。
+注意：delete / stash 前请先退出 DSH 客户端 —— 宿主的归档集合在内存里，
+运行中直接改 workspace.json 会被它下一次写入覆盖。
 `;
 
 function main() {
@@ -196,9 +331,14 @@ function main() {
   switch (cmd) {
     case 'list': return cmdList();
     case 'delete': return cmdDelete();
+    case 'delete-many': return cmdDelete();
+    case 'export': return cmdExport();
     case 'trash': return cmdTrash();
     case 'restore': return cmdRestore();
     case 'purge': return cmdPurge();
+    case 'stash': return cmdStash();
+    case 'unstash': return cmdUnstash();
+    case 'stash-list': return cmdStashList();
     case 'help':
     case '--help':
     case '-h': return void console.log(HELP);
