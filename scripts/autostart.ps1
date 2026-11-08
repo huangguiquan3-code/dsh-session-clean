@@ -1,4 +1,4 @@
-# Toggle DeepSeek Harness autostart for the current user (HKCU Run).
+﻿# Toggle DeepSeek Harness autostart for the current user (HKCU Run).
 # ASCII-only on purpose: Windows PowerShell 5.1 misreads BOM-less UTF-8.
 #
 #   powershell -ExecutionPolicy Bypass -File autostart.ps1 status

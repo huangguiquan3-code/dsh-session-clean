@@ -12,6 +12,12 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
+const HAS_ZSTD = typeof zlib.zstdCompressSync === 'function';
+if (!HAS_ZSTD) {
+  console.log(`SKIP  zstd 需要 Node 22.15+（当前 ${process.version}）`);
+  process.exit(0);
+}
+
 import { scanSessions } from '../lib/store.js';
 import { readSessionEvents, scanZstdFrames } from '../lib/zstd-log.js';
 import { buildMarkdown, buildJson } from '../lib/transcript.js';
